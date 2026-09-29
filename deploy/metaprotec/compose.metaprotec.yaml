@@ -1,0 +1,119 @@
+# =====================================================================
+# Notra — Compose para servidor de Metaprotec
+# ---------------------------------------------------------------------
+# Diferencias frente a compose.kyvrax.yaml:
+#   - El servicio `web` usa el Dockerfile con nginx (deploy/metaprotec/Dockerfile.web)
+#   - El servicio `web` expone el puerto 80 (host:8080 -> container:80) para que
+#     el proxy/balanceador del cliente lo coja directamente
+#   - nginx del `web` ya hace proxy de /api/* a `api:3001`,
+#     por lo que NO hace falta exponer la API al host ni al proxy externo:
+#     el dominio público apunta SOLO al `web` y desde ahí va todo en same-origin.
+#   - Postgres queda en la red interna (sin exposición al host)
+#
+# Uso:
+#   cp deploy/metaprotec/env.production.example .env.production   # editar valores
+#   docker compose -f deploy/metaprotec/compose.metaprotec.yaml --env-file .env.production build
+#   docker compose -f deploy/metaprotec/compose.metaprotec.yaml --env-file .env.production up -d
+# =====================================================================
+
+name: metapress
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: metapress-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    image: metapress-api:local
+    container_name: metapress-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ../../.env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+    command:
+      - sh
+      - -c
+      - >-
+        pnpm --filter @prensa-app/api exec prisma migrate deploy &&
+        node /workspace/apps/api/dist/server.js
+    networks:
+      - internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/metaprotec/Dockerfile.web
+    image: metapress-web:local
+    container_name: metapress-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+    ports:
+      # Expone nginx al host en 8080 (cambia si el proxy del cliente
+      # apunta a otro puerto, o quita esto si lo conectas por red docker)
+      - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    image: metapress-worker:local
+    container_name: metapress-worker
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - ../../.env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  pgdata:

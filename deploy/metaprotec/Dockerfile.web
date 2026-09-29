@@ -1,0 +1,37 @@
+# =====================================================================
+# Dockerfile WEB para PRODUCCIÓN en servidor Metaprotec
+# ---------------------------------------------------------------------
+# - Build: Node + pnpm -> genera apps/web/dist
+# - Runtime: nginx:alpine sirviendo los estáticos
+# - nginx hace ADEMÁS proxy interno de /api/* -> api:3001
+#   => Front y API quedan en el MISMO origen -> NO hay CORS, NO hay 404 en OPTIONS
+# =====================================================================
+
+FROM node:24-slim AS build
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+RUN corepack enable
+
+WORKDIR /workspace
+
+COPY . .
+
+RUN corepack prepare pnpm@10.15.1 --activate
+RUN pnpm install --no-frozen-lockfile
+RUN pnpm --filter @prensa-app/web build
+
+
+FROM nginx:1.27-alpine AS runtime
+
+# Sustituye la configuración por defecto de nginx
+COPY deploy/metaprotec/nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copia los estáticos compilados de Vite
+COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+# nginx:alpine ya define el CMD por defecto; lo dejamos explícito por claridad
+CMD ["nginx", "-g", "daemon off;"]

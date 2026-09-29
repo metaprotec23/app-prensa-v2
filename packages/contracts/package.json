@@ -1,0 +1,25 @@
+{
+  "name": "@prensa-app/contracts",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@prensa-app/config-eslint": "workspace:*",
+    "@prensa-app/config-typescript": "workspace:*",
+    "eslint": "^9.34.0",
+    "typescript": "5.8.3"
+  }
+}
